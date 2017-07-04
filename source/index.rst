@@ -10,7 +10,8 @@ Welcome to ZeroMQ's documentation!
    :maxdepth: 2
    :caption: Contents:
     
-   ch1/index.rst
+   ch1/index
+   ch2/index
 
 
 Indices and tables

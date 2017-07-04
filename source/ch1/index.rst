@@ -5,6 +5,9 @@
 
 `官方文档 <http://zguide.zeromq.org/page:all>`_
 
+`PyZMQ Documentation <https://pyzmq.readthedocs.io/en/latest/>`_
+
+`zmqpp : C++ style API <https://zeromq.github.io/zmqpp/>`_
 
 * Ubuntu 
 
@@ -240,7 +243,7 @@ REQ-REP套接字对是步调一致的。客户端在一个循环中（或一次�
         // OR : subscriber.connect("ipc://weather.ipc");
 
         //  Subscribe to zipcode, default is NYC, 10001
-            const char *filter = (argc > 1)? argv [1]: "10001 ";
+        const char *filter = (argc > 1)? argv [1]: "10001 ";
         subscriber.setsockopt(ZMQ_SUBSCRIBE, filter, strlen (filter));
 
         //  Process 100 updates
@@ -254,13 +257,13 @@ REQ-REP套接字对是步调一致的。客户端在一个循环中（或一次�
             subscriber.recv(&update);
 
             std::istringstream iss(static_cast<char*>(update.data()));
-                    iss >> zipcode >> temperature >> relhumidity ;
+            iss >> zipcode >> temperature >> relhumidity ;
 
-                    total_temp += temperature;
+            total_temp += temperature;
         }
-        std::cout 	<< "Average temperature for zipcode '"<< filter
-                            <<"' was "<<(int) (total_temp / update_nbr) <<"F"
-                            << std::endl;
+        std::cout << "Average temperature for zipcode '"<< filter
+                  <<"' was "<<(int) (total_temp / update_nbr) <<"F"
+                  << std::endl;
         return 0;
     }
 
@@ -276,6 +279,180 @@ REQ-REP套接字对是步调一致的。客户端在一个循环中（或一次�
 
 分而治之
 ========
+
+.. code-block:: cpp
+
+    //  Task ventilator in C++
+    //  Binds PUSH socket to tcp://localhost:5557
+    //  Sends batch of tasks to workers via that socket
+    //
+    //  Olivier Chamoux <olivier.chamoux@fr.thalesgroup.com>
+    //
+    #include <zmq.hpp>
+    #include <stdlib.h>
+    #include <stdio.h>
+    #include <unistd.h>
+    #include <iostream>
+
+    #define within(num) (int) ((float) num * random () / (RAND_MAX + 1.0))
+
+    int main (int argc, char *argv[])
+    {
+        zmq::context_t context (1);
+
+        //  Socket to send messages on
+        zmq::socket_t  sender(context, ZMQ_PUSH);
+        sender.bind("tcp://*:5557");
+
+        std::cout << "Press Enter when the workers are ready: " << std::endl;
+        getchar ();
+        std::cout << "Sending tasks to workers…\n" << std::endl;
+
+        //  The first message is "0" and signals start of batch
+        zmq::socket_t sink(context, ZMQ_PUSH);
+        sink.connect("tcp://localhost:5558");
+        zmq::message_t message(2);
+        memcpy(message.data(), "0", 1);
+        sink.send(message);
+
+        //  Initialize random number generator
+        srandom ((unsigned) time (NULL));
+
+        //  Send 100 tasks
+        int task_nbr;
+        int total_msec = 0;     //  Total expected cost in msecs
+        for (task_nbr = 0; task_nbr < 100; task_nbr++) {
+            int workload;
+            //  Random workload from 1 to 100msecs
+            workload = within (100) + 1;
+            total_msec += workload;
+
+            message.rebuild(10);
+            memset(message.data(), '\0', 10);
+            sprintf ((char *) message.data(), "%d", workload);
+            sender.send(message);
+        }
+        std::cout << "Total expected cost: " << total_msec << " msec" << std::endl;
+        sleep (1);              //  Give 0MQ time to deliver
+
+        return 0;
+    }
+
+
+.. code-block:: cpp 
+
+    //  Task worker in C++
+    //  Connects PULL socket to tcp://localhost:5557
+    //  Collects workloads from ventilator via that socket
+    //  Connects PUSH socket to tcp://localhost:5558
+    //  Sends results to sink via that socket
+    //
+    //  Olivier Chamoux <olivier.chamoux@fr.thalesgroup.com>
+    //
+    #include "zhelpers.hpp"
+    #include <string>
+
+    int main (int argc, char *argv[])
+    {
+        zmq::context_t context(1);
+
+        //  Socket to receive messages on
+        zmq::socket_t receiver(context, ZMQ_PULL);
+        receiver.connect("tcp://localhost:5557");
+
+        //  Socket to send messages to
+        zmq::socket_t sender(context, ZMQ_PUSH);
+        sender.connect("tcp://localhost:5558");
+
+        //  Process tasks forever
+        while (1) {
+
+            zmq::message_t message;
+            int workload;           //  Workload in msecs
+
+            receiver.recv(&message);
+            std::string smessage(static_cast<char*>(message.data()), message.size());
+
+            std::istringstream iss(smessage);
+            iss >> workload;
+
+            //  Do the work
+            s_sleep(workload);
+
+            //  Send results to sink
+            message.rebuild();
+            sender.send(message);
+
+            //  Simple progress indicator for the viewer
+            std::cout << "." << std::flush;
+        }
+        return 0;
+    }
+
+
+.. code-block:: cpp
+
+    //  Task sink in C++
+    //  Binds PULL socket to tcp://localhost:5558
+    //  Collects results from workers via that socket
+    //
+    //  Olivier Chamoux <olivier.chamoux@fr.thalesgroup.com>
+    //
+    #include <zmq.hpp>
+    #include <time.h>
+    #include <sys/time.h>
+    #include <iostream>
+
+    int main (int argc, char *argv[])
+    {
+        //  Prepare our context and socket
+        zmq::context_t context(1);
+        zmq::socket_t receiver(context,ZMQ_PULL);
+        receiver.bind("tcp://*:5558");
+
+        //  Wait for start of batch
+        zmq::message_t message;
+        receiver.recv(&message);
+
+        //  Start our clock now
+        struct timeval tstart;
+        gettimeofday (&tstart, NULL);
+
+        //  Process 100 confirmations
+        int task_nbr;
+        int total_msec = 0;     //  Total calculated cost in msecs
+        for (task_nbr = 0; task_nbr < 100; task_nbr++) {
+
+            receiver.recv(&message);
+            if ((task_nbr / 10) * 10 == task_nbr)
+                std::cout << ":" << std::flush;
+            else
+                std::cout << "." << std::flush;
+        }
+        //  Calculate and report duration of batch
+        struct timeval tend, tdiff;
+        gettimeofday (&tend, NULL);
+
+        if (tend.tv_usec < tstart.tv_usec) {
+            tdiff.tv_sec = tend.tv_sec - tstart.tv_sec - 1;
+            tdiff.tv_usec = 1000000 + tend.tv_usec - tstart.tv_usec;
+        }
+        else {
+            tdiff.tv_sec = tend.tv_sec - tstart.tv_sec;
+            tdiff.tv_usec = tend.tv_usec - tstart.tv_usec;
+        }
+        total_msec = tdiff.tv_sec * 1000 + tdiff.tv_usec / 1000;
+        std::cout << "\nTotal elapsed time: " << total_msec << " msec\n" << std::endl;
+        return 0;
+    }
+
+    
+.. code-block:: sh
+
+    $ g++ taskvent.cpp -o taskvent -lzmq
+    $ g++ taskwork.cpp -o taskwork -lzmq
+    $ g++ tasksink.cpp -o tasksink -lzmq
+     
 
 用ØMQ编程
 =========

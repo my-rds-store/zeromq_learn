@@ -1,3 +1,8 @@
 *.o
 *.swp
 build/
+
+source/examples/*
+!source/examples/C/
+!source/examples/C++/
+

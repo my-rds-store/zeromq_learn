@@ -7,13 +7,21 @@
 
 `PyZMQ Documentation <https://pyzmq.readthedocs.io/en/latest/>`_
 
-`zmqpp : C++ style API <https://zeromq.github.io/zmqpp/>`_
+API 
+    `zmqpp : C++ style API <https://zeromq.github.io/zmqpp/>`_
 
 * Ubuntu 
 
-    .. code-block:: sh
+
+    .. code-block:: bash
 
         $ sudo aptitude install libzmq3-dev
+
+修复这个世界
+============
+
+本书读者对象
+============
 
 
 获取示例
@@ -34,11 +42,13 @@
     :alt: alternate text
     :align: center
 
-*图1-1 请求-应答*
- 
 
-示例 HeloWorld服务器(hwserver.cpp)
+.. raw:: html
 
+    <p style="text-align:center;">图1-1 请求－应答</p>
+
+
+**示例 HeloWorld服务器 (hwserver.cpp)**
 
 .. literalinclude:: ../examples/C++/hwserver.cpp
     :language: cpp
@@ -85,106 +95,21 @@ REQ-REP套接字对是步调一致的。客户端在一个循环中（或一次�
     :alt: alternate text
     :align: center
 
-*图 发布-订阅*
- 
+.. raw:: html
 
-.. code-block:: cpp
-
-    //  Weather update server in C++
-    //  Binds PUB socket to tcp://*:5556
-    //  Publishes random weather updates
-    //
-    //  Olivier Chamoux <olivier.chamoux@fr.thalesgroup.com>
-    //
-    #include <zmq.hpp>
-    #include <stdio.h>
-    #include <stdlib.h>
-    #include <time.h>
-
-    #if (defined (WIN32))
-    #include <zhelpers.hpp>
-    #endif
-
-    #define within(num) (int) ((float) num * random () / (RAND_MAX + 1.0))
-
-    int main () {
-
-        //  Prepare our context and publisher
-        zmq::context_t context (1);
-        zmq::socket_t publisher (context, ZMQ_PUB);
-        publisher.bind("tcp://*:5556");
-        publisher.bind("ipc://weather.ipc");				// Not usable on Windows.
-
-        //  Initialize random number generator
-        srandom ((unsigned) time (NULL));
-        while (1) {
-
-            int zipcode, temperature, relhumidity;
-
-            //  Get values that will fool the boss
-            zipcode     = within (100000);
-            temperature = within (215) - 80;
-            relhumidity = within (50) + 10;
-
-            //  Send message to all subscribers
-            zmq::message_t message(20);
-            snprintf ((char *) message.data(), 20 ,
-                    "%05d %d %d", zipcode, temperature, relhumidity);
-            publisher.send(message);
-
-        }
-        return 0;
-    }
+    <p style="text-align:center;">图 发布-订阅</p>
 
 
-.. code-block:: cpp
+.. literalinclude:: ../examples/C++/wuserver.cpp
+    :language: bash
+    :encoding: utf-8
 
-    //  Weather update client in C++
-    //  Connects SUB socket to tcp://localhost:5556
-    //  Collects weather updates and finds avg temp in zipcode
-    //
-    //  Olivier Chamoux <olivier.chamoux@fr.thalesgroup.com>
-    //
-    #include <zmq.hpp>
-    #include <iostream>
-    #include <sstream>
 
-    int main (int argc, char *argv[])
-    {
-        zmq::context_t context (1);
+.. literalinclude:: ../examples/C++/wuclient.cpp
+    :language: bash
+    :encoding: utf-8
 
-        //  Socket to talk to server
-        std::cout << "Collecting updates from weather server...\n" << std::endl;
-        zmq::socket_t subscriber (context, ZMQ_SUB);
-        subscriber.connect("tcp://localhost:5556"); 
-        // OR : subscriber.connect("ipc://weather.ipc");
-
-        //  Subscribe to zipcode, default is NYC, 10001
-        const char *filter = (argc > 1)? argv [1]: "10001 ";
-        subscriber.setsockopt(ZMQ_SUBSCRIBE, filter, strlen (filter));
-
-        //  Process 100 updates
-        int update_nbr;
-        long total_temp = 0;
-        for (update_nbr = 0; update_nbr < 100; update_nbr++) {
-
-            zmq::message_t update;
-            int zipcode, temperature, relhumidity;
-
-            subscriber.recv(&update);
-
-            std::istringstream iss(static_cast<char*>(update.data()));
-            iss >> zipcode >> temperature >> relhumidity ;
-
-            total_temp += temperature;
-        }
-        std::cout << "Average temperature for zipcode '"<< filter
-                  <<"' was "<<(int) (total_temp / update_nbr) <<"F"
-                  << std::endl;
-        return 0;
-    }
-
-.. code-block:: sh
+.. code-block:: bash
 
     $ g++ wuserver.cpp -o wuserver -lzmq
     $ g++ wuclient.cpp -o wuclient -lzmq

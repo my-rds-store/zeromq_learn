@@ -71,7 +71,7 @@ API
 
 **示例 HeloWorld服务器 (hwserver.cpp)**
 
-.. literalinclude:: ../examples/C++/hwserver.cpp
+.. literalinclude:: ../examples/C/hwserver.c
     :language: cpp
     :encoding: utf-8
     :emphasize-lines: 20
@@ -79,7 +79,7 @@ API
 示例 HeloWorld客户端代码(hwclient.cpp)
 
 
-.. literalinclude:: ../examples/C++/hwclient.cpp
+.. literalinclude:: ../examples/C/hwclient.c
     :language: cpp
     :encoding: utf-8
 
@@ -87,8 +87,8 @@ API
 
 .. code-block:: sh
 
-    $ g++ hwserver.cpp -o hwserver -lzmq
-    $ g++ hwclient.cpp -o hwclient -lzmq
+    $ gcc hwserver.cpp -o hwserver -lzmq
+    $ gcc hwclient.cpp -o hwclient -lzmq
 
 REQ-REP套接字对是步调一致的。客户端在一个循环中（或一次，根据需要而定）先发出 send(),然后在发出recv().任何其他序列（例如,一行中发送两个消息）将导致从send或者recv代码返回-1.同样的，服务器先发出recv(),然后再发出send ,按照这个顺序，根据需要多次重复。
 
@@ -138,8 +138,8 @@ REQ-REP套接字对是步调一致的。客户端在一个循环中（或一次�
 
 .. code-block:: bash
 
-    $ g++ wuserver.c -o wuserver -lzmq
-    $ g++ wuclient.c -o wuclient -lzmq
+    $ gcc wuserver.c -o wuserver -lzmq
+    $ gcc wuclient.c -o wuclient -lzmq
 
 需要注意的是，在使用SUB套接字时，必须使用zmq_setsockopt()函数和 SUBSCRIBE 来设置订阅的内容。如果你不设置订阅内容，那将什么消息都收不到，新手很容易犯这个错误。订阅信息可以是任何字符串，可以设置多次。只要消息满足其中一条订阅信息，SUB套接字就会收到。订阅者可以选择不接收某类消息，要了解这是如何工作的。请参见 zmq_setsockopt_ ().
 
@@ -160,45 +160,113 @@ REQ-REP套接字对是步调一致的。客户端在一个循环中（或一次�
 
 我们知道在建立TCP连接时需要进行三次握手，会耗费几毫秒的时间，而当节点数增加时这个数字也会上升。在这么短的时间里，ZMQ就可以发送很多很多消息了。举例来说，如果建立连接需要耗时5毫秒，而ZMQ只需要1毫秒就可以发送完这1000条消息。
 
-* 一个订阅者可以连接到多个发布者，每次使用一个connect 调用。那么数据将交错到达（"公平排队"),因此，没有任何一个发布者能淹没其他发布者。
+第二章中我会解释如何使发布者和订阅者同步，只有当订阅者准备好时发布者才会开始发送消息。有一种简单的方法来同步PUB和SUB，就是让PUB延迟一段时间再发送消息。现实编程中我不建议使用这种方式，因为它太脆弱了，而且不好控制。不过这里我们先暂且使用sleep的方式来解决，等到第二章的时候再讲述正确的处理方式。
 
-分而治之
-========
+另一种同步的方式则是认为发布者的消息流是无穷无尽的，因此丢失了前面一部分信息也没有关系。我们的气象信息客户端就是这么做的。
 
+示例中的气象信息客户端会收集指定邮编的一千条信息，其间大约有1000万条信息被发布。你可以先打开客户端，再打开服务端，工作一段时间后重启服务端，这时客户端仍会正常工作。当客户端收集完所需信息后，会计算并输出平均温度
+
+关于发布-订阅模式的几点说明：
+
+* 订阅者可以连接多个发布者，轮流接收消息；
+* 如果发布者没有订阅者与之相连，那它发送的消息将直接被丢弃；
+* 如果你使用TCP协议，那当订阅者处理速度过慢时，消息会在发布者处堆积。以后我们会讨论如何使用阈值（HWM）来保护发布者。
+* 在目前版本的ZMQ中，消息的过滤是在订阅者处进行的。也就是说，发布者会向订阅者发送所有的消息，订阅者会将未订阅的消息丢弃
+ 
+
+分布式处理
+===========
+
+下面一个示例程序中，我们将使用ZMQ进行超级计算，也就是并行处理模型：
+
+* 任务分发器会生成大量可以并行计算的任务；
+* 有一组worker会处理这些任务；
+* 结果收集器会在末端接收所有worker的处理结果，进行汇总。
+* 现实中，worker可能散落在不同的计算机中，利用GPU（图像处理单元）进行复杂计算。下面是任务分发器的代码，它会生成100个任务，任务内容是让收到的worker延迟若干毫秒。
 
 .. image:: ../images/fig5.svg
     :scale: 100%
     :alt: alternate text
     :align: center
 
+并行任务分发器(taskvent)
+    现实中，worker可能散落在不同的计算机中，利用GPU（图像处理单元）进行复杂计算。下面是任务分发器的代码，它会生成100个任务，任务内容是让收到的worker延迟若干毫秒。
 
-
-.. literalinclude:: ../examples/C++/taskvent.cpp
+.. literalinclude:: ../examples/C/taskvent.c
     :language: cpp
     :encoding: utf-8
 
  
-.. literalinclude:: ../examples/C++/taskwork.cpp
+并行任务工人(taskwork)
+    它接受信息并延迟指定的毫秒数，并发送执行完毕的信号.
+
+.. literalinclude:: ../examples/C/taskwork.c
     :language: cpp
     :encoding: utf-8
 
+并行任务接收器(tasksink)
+    它会收集100个处理结果，并计算总的执行时间，让我们由此判别任务是否是并行计算的。
 
-.. literalinclude:: ../examples/C++/tasksink.cpp
+.. literalinclude:: ../examples/C/tasksink.c
     :language: cpp
     :encoding: utf-8
     
 .. code-block:: sh
 
-    $ g++ taskvent.cpp -o taskvent -lzmq
-    $ g++ taskwork.cpp -o taskwork -lzmq
-    $ g++ tasksink.cpp -o tasksink -lzmq
+    $ gcc taskvent.cpp -o taskvent -lzmq
+    $ gcc taskwork.cpp -o taskwork -lzmq
+    $ gcc tasksink.cpp -o tasksink -lzmq
      
+.. seealso::
+    * 1. 先启动一个(或多个 taskwork).
+    * 2. 再启动 tasksink .
+    * 3. 最后启动 taskvent .
+
+关于这段代码的几个细节：
+
+* worker上游和任务分发器相连，下游和结果收集器相连，这就意味着你可以开启任意多个worker。但若worker是绑定至端点的，而非连接至端点，那我们就需要准备更多的端点，并配置任务分发器和结果收集器。所以说，任务分发器和结果收集器是这个网络结构中较为稳定的部分，因此应该由它们绑定至端点，而非worker，因为它们较为动态。
+* 我们需要做一些同步的工作，等待worker全部启动之后再分发任务。这点在ZMQ中很重要，且不易解决。连接套接字的动作会耗费一定的时间，因此当第一个worker连接成功时，它会一下收到很多任务。所以说，如果我们不进行同步，那这些任务根本就不会被并行地执行。你可以自己试验一下。
+* 任务分发器使用PUSH套接字向worker均匀地分发任务（假设所有的worker都已经连接上了），这种机制称为 *负载均衡* ，以后我们会见得更多。
+* 结果收集器的PULL套接字会均匀地从worker处收集消息，这种机制称为 *公平队列*：
+
+
+.. image:: ../images/fig6.svg
+    :scale: 100%
+    :alt: alternate text
+    :align: center
+
+管道模式也会出现"慢木匠"的情况，让人误以为PUSH套接字没有进行负载均衡。如果你的程序中某个worker接收到了更多的请求，那是因为它的PULL套接字连接得比较快，从而在别的worker连接之前获取了额外的消息。
 
 用ØMQ编程
 =========
 
-获取正确的上下文
+正确的使用上下文
 ================
+
+ZMQ应用程序的一开始总是会先创建一个上下文，并用它来创建套接字。在C语言中，创建上下文的函数是zmq_ctx_new()。一个进程中只应该创建一个上下文。从技术的角度来说，上下文是一个容器，包含了该进程中所有的套接字，并为inproc协议提供实现，用以高速连接进程内不同的线程。如果一个进程中创建了两个上下文，那就相当于启动了两个ZMQ实例。如果这正是你需要的，那没有问题，但一般情况下：
+
+**在一个进程中使用zmq_ctx_new()函数创建一个上下文，并在结束时使用zmq_ctx_destroy()函数关闭它.**
+
+如果你使用了fork()系统调用，那每个进程需要自己的上下文对象。如果在调用fork()之前调用了zmq_ctx_new()函数，那每个子进程都会有自己的上下文对象。通常情况下，你会需要在子进程中做些有趣的事，而让父进程来管理它们。
+
+正确退出和清理
+==============
+
+程序员的一个良好习惯是：总是在结束时进行清理工作。当你使用像Python那样的语言编写ZMQ应用程序时，系统会自动帮你完成清理。但如果使用的是C语言，那就需要小心地处理了，否则可能发生内存泄露、应用程序不稳定等问题。
+
+内存泄露只是问题之一，其实ZMQ是很在意程序的退出方式的。个中原因比较复杂，但简单的来说，如果仍有套接字处于打开状态，调用zmq_ctx_destroy()时会导致程序挂起；就算关闭了所有的套接字，如果仍有消息处于待发送状态，zmq_ctx_destroy()也会造成程序的等待。只有当套接字的LINGER选项设为0时才能避免。
+
+我们需要关注的ZMQ对象包括：消息、套接字、上下文。好在内容并不多，至少在一般的应用程序中是这样：
+
+处理完消息后，记得用zmq_msg_close()函数关闭消息；
+如果你同时打开或关闭了很多套接字，那可能需要重新规划一下程序的结构了；
+退出程序时，应该先关闭所有的套接字，最后调用zmq_ctx_destroy()函数，销毁上下文对象。
+如果要用ZMQ进行多线程的编程，需要考虑的问题就更多了。我们会在下一章中详述多线程编程，但如果你耐不住性子想要尝试一下，以下是在退出时的一些建议：
+
+不要在多个线程中使用同一个套接字。不要去想为什么，反正别这么干就是了。
+关闭所有的套接字，并在主程序中关闭上下文对象。
+如果仍有处于阻塞状态的recv或poll调用，应该在主程序中捕捉这些错误，并在相应的线程中关闭套接字。不要重复关闭上下文，zmq_ctx_destroy()函数会等待所有的套接字安全地关闭后才结束。
+看吧，过程是复杂的，所以不同语言的API实现者可能会将这些步骤封装起来，让结束程序变得不那么复杂。
 
 为什么我们需要ØMQ
 =================
